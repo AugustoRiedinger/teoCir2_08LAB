@@ -41,7 +41,8 @@ void INIT_DO(GPIO_TypeDef* Port, uint32_t Pin)
 	GPIO_InitStructure.GPIO_Pin = Pin;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
-	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL ;
+	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_DOWN;
+	GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
 
 	//Se aplica la configuracion definida anteriormente al puerto:
 	GPIO_Init(Port, &GPIO_InitStructure);
@@ -233,7 +234,7 @@ void INIT_TIM3(uint32_t Freq)
 	TIM_Cmd(TIM3, DISABLE);
 
 	/*Definicion de la base de tiempo:*/
-	uint16_t TimeBase = 200e3;
+	uint32_t TimeBase = 200e3;
 
 	/*Computar el valor del preescaler en base a la base de tiempo:*/
 	uint16_t PrescalerValue = 0;

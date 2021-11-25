@@ -26,8 +26,8 @@ DEFINICIONES LOCALES:
 #define dacPort GPIOA
 #define dacPin  GPIO_Pin_5
 
-/*Frecuencia de muestreo - 50kHz:*/
-#define FS  20e3 //[kHz]
+/*Frecuencia de muestreo - 20kHz:*/
+#define FS  20000 //[kHz]
 
 /*Numero de coeficientes - 6:*/
 #define n 6
@@ -36,20 +36,28 @@ DEFINICIONES LOCALES:
 void ADC_PROCESSING(void);
 
 /*Funcion de proceso del IIR:*/
-void IIR_F32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff);
+void IIR_F32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff_b, float* pCoeff_a);
 
 /*------------------------------------------------------------------------------
 VARIABLES GLOBALES:
 ------------------------------------------------------------------------------*/
-/*Declaracion del arreglo de la Señal de Estado:*/
-float iirState_f32[n + 1];
+uint32_t i = 0;
 
-/*Coeficientes del filtro:*/
-float coeff_f32[n] = {
-						-7.8158e-05, -7.9869e-03, -4.0285e-02, -1.0310e-01,
-						-1.7003e-01, 8.0139e-01 , -1.7003e-01, -1.0310e-01,
-						-4.0285e-02, -7.9869e-03, -7.8158e-05
-					 };
+/*Declaracion del arreglo de la Señal de Estado:*/
+float iirStateIn_f32 [2*n];
+float iirStateOut_f32[2*n];
+
+/*Coeficientes del filtro obtenidos en GNU Octave con cheby1(): */
+float b[2*n+1] = {0.1832424665583316, -2.4412800655459803e-16, 1.0994547993499895,
+				 -1.2206400327729901e-15, 2.7486369983749741, -2.4412800655459802e-15,
+				 3.6648493311666321, -2.4412800655459802e-15, 2.7486369983749741,
+				 -1.2206400327729901e-15, 1.0994547993499895, -2.4412800655459803e-16,
+				 0.1832424665583316};
+
+float a[2*n+1] = {1, -5.5511151231257827e-16, 2.8266303814860598, -1.1102230246251565e-15,
+				  3.9461521181664487, -3.5527136788005009e-15, 3.1150661053039146,
+				  -2.8310687127941492e-15, 1.6070012817944181, -6.9388939039072284e-16,
+				  0.52520012936098293, -2.0816681711721685e-16, 0.1384414456647135};
 
 /*Variable para organizar el Task Scheduler:*/
 uint8_t adcReady = 0;
@@ -76,6 +84,8 @@ CONFIGURACION DEL MICRO:
 	/*Inicialización del TIM3:*/
 	INIT_TIM3(FS);
 
+	INIT_DO(GPIOC, GPIO_Pin_8);
+
 /*------------------------------------------------------------------------------
 BUCLE PRINCIPAL:
 ------------------------------------------------------------------------------*/
@@ -95,6 +105,8 @@ void TIM3_IRQHandler(void) {
         /*Set de la variable del TS:*/
         adcReady = 1;
 
+        GPIO_ToggleBits(GPIOC, GPIO_Pin_8);
+
         TIM_ClearITPendingBit(TIM3, TIM_IT_Update);
 	}
 }
@@ -112,10 +124,10 @@ void ADC_PROCESSING()
 	signalIn = READ_ADC(adcPort, adcPin) - 2048;
 
 	/*Normalizado 0.0 a 1.0. */		/*	-0.5 a 0.5	*/
-	iirIn = ((float)signalIn) / 4096;
+	iirIn = ((float)signalIn) / 4096.0;
 
 	/*Llamado a la función de proceso FIR:*/
-	IIR_F32(&iirIn, &iirOut, n, coeff_f32);
+	IIR_F32(&iirIn, &iirOut, 2*n, b, a);
 
 	/*Desnormalizado 0 a 4096:*/
 	signalOut = (iirOut * 4096) + 2048;
@@ -128,43 +140,26 @@ void ADC_PROCESSING()
 FUNCIONES LOCALES:
 ------------------------------------------------------------------------------*/
 /*Proceso del IIR: Y(n) = B0*X(n) + B1*X(n-1) + B2*X(n-2) + A1*Y(n-1) + A2*Y(n-2):*/
-void IIR_F32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff)
+void IIR_F32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff_b, float* pCoeff_a)
 {
-	float ACUM;
-	uint16_t i, i_bic;
+	float ACUM = 0.0f;
 
 	/*Senal de Entrada:*/
-	ACUM = *pSrc;
+	ACUM = *pSrc * pCoeff_b[0];
 
-	/*Repetir por N bicuadraticas:*/
-	for(i_bic = 0; i_bic < N_COEF; i_bic++)
-	{
-		/*Ajustar Indice de variables:*/
-		i = i_bic * 5;
-
-		/*X[n] = Valor del ADC o ultimo filtro:*/
-		iirState_f32[i + 2] = ACUM;
-
-		/* Y[n] =        B0 * X[n]   */
-		ACUM = pCoeff[i + 2] * iirState_f32[i + 2];
-		/* Y[n] = Y[n] + B1 * X[n-1] */
-		ACUM = ACUM + pCoeff[i + 1] * iirState_f32[i + 1];
-		/* Y[n] = Y[n] + B2 * X[n-2] */
-		ACUM = ACUM + pCoeff[i + 0] * iirState_f32[i + 0];
-		/* Y[n] = Y[n] + A1 * Y[n-1] */
-		ACUM = ACUM + pCoeff[i + 3] * iirState_f32[i + 3];
-		/* Y[n] = Y[n] + A2 * Y[n-2] */
-		ACUM = ACUM + pCoeff[i + 4] * iirState_f32[i + 4];
-
-		 /* X[n-2] = X[n-1] */
-		iirState_f32[i + 0] = iirState_f32[i + 1];
-		 /* X[n-1] = X[n]   */
-		iirState_f32[i + 1] = iirState_f32[i + 2];
-		/* Y[n-2] = Y[n-1] */
-		iirState_f32[i + 3] = iirState_f32[i + 4];
-		/* Y[n-1] = Y[n]   */
-		iirState_f32[i + 4] = ACUM;
+	/*Diseño del filtro:*/
+	for (uint32_t i = 0; i < N_COEF; i++) {
+		ACUM += iirStateIn_f32 [i] * pCoeff_b[i+1];
+		ACUM -= iirStateOut_f32[i] * pCoeff_a[i+1];
 	}
+
+	for (uint32_t i = N_COEF - 1; i > 0; i--){
+		iirStateIn_f32[i]  = iirStateIn_f32 [i-1];
+		iirStateOut_f32[i] = iirStateOut_f32[i-1];
+	}
+
+	iirStateIn_f32 [0] = *pSrc;
+	iirStateOut_f32[0] = ACUM;
 
 	/*Senal de salida:*/
 	*pDst = ACUM;
