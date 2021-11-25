@@ -1,0 +1,11 @@
+functions.c:30:6:INIT_DO	32	static
+functions.c:62:6:INIT_ADC	80	static
+functions.c:132:9:READ_ADC	24	static
+functions.c:159:6:INIT_DAC_CONT	32	static
+functions.c:201:6:DAC_CONT	16	static
+functions.c:217:6:INIT_TIM3	24	static
+functions.c:260:10:FIND_CLOCK	24	static
+functions.c:274:14:FIND_ADC_TYPE	24	static
+functions.c:299:10:FIND_RCC_APB	24	static
+functions.c:310:9:FIND_CHANNEL	24	static
+functions.c:331:10:FIND_DAC_CHANNEL	16	static

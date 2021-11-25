@@ -26,29 +26,26 @@ DEFINICIONES LOCALES:
 #define dacPort GPIOA
 #define dacPin  GPIO_Pin_5
 
-/*Parametros de configuración del TIM3 - 200mseg:*/
-#define TimeBase 200e3 //[mseg]
-
 /*Frecuencia de muestreo - 50kHz:*/
 #define FS  20e3 //[kHz]
 
-/*Numero de coeficientes - 10:*/
-#define n 11
+/*Numero de coeficientes - 6:*/
+#define n 6
 
 /*Funcion para procesar los datos del ADC:*/
 void ADC_PROCESSING(void);
 
-/*Funcion de proceso del FIR:*/
-void filter_fir_f32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff);
+/*Funcion de proceso del IIR:*/
+void IIR_F32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff);
 
 /*------------------------------------------------------------------------------
 VARIABLES GLOBALES:
 ------------------------------------------------------------------------------*/
 /*Declaracion del arreglo de la Señal de Estado:*/
-float firState_f32[n + 1];
+float iirState_f32[n + 1];
 
 /*Coeficientes del filtro:*/
-float Coeff_f32[n] = {
+float coeff_f32[n] = {
 						-7.8158e-05, -7.9869e-03, -4.0285e-02, -1.0310e-01,
 						-1.7003e-01, 8.0139e-01 , -1.7003e-01, -1.0310e-01,
 						-4.0285e-02, -7.9869e-03, -7.8158e-05
@@ -58,8 +55,8 @@ float Coeff_f32[n] = {
 uint8_t adcReady = 0;
 
 /*Variables de para crear el filtro FIR:*/
-float firIn = 0.0f;
-float firOut = 0.0f;
+float iirIn = 0.0f;
+float iirOut = 0.0f;
 int32_t signalIn = 0;
 int32_t signalOut = 0;
 
@@ -71,10 +68,10 @@ CONFIGURACION DEL MICRO:
 	SystemInit();
 
 	/*Inicializacion del ADC:*/
-	INIT_ADC(ADC_Port, ADC_Pin);
+	INIT_ADC(adcPort, adcPin);
 
 	/*Inicializacion del DAC:*/
-	INIT_DAC_CONT(DAC_Port, DAC_Pin);
+	INIT_DAC_CONT(dacPort, dacPin);
 
 	/*Inicialización del TIM3:*/
 	INIT_TIM3(FS);
@@ -112,47 +109,63 @@ void ADC_PROCESSING()
     adcReady = 0;
 
 	/*Conversion del dato del AD:*/
-	signalIn = READ_ADC(ADC_Port, ADC_Pin) - 2048;
+	signalIn = READ_ADC(adcPort, adcPin) - 2048;
 
 	/*Normalizado 0.0 a 1.0. */		/*	-0.5 a 0.5	*/
-	firIn = ((float)signalIn) / 4096;
+	iirIn = ((float)signalIn) / 4096;
 
 	/*Llamado a la función de proceso FIR:*/
-	filter_fir_f32(&firIn, &firOut, n, Coeff_f32);
+	IIR_F32(&iirIn, &iirOut, n, coeff_f32);
 
 	/*Desnormalizado 0 a 4096:*/
-	signalOut = (firOut * 4096) + 2048;
+	signalOut = (iirOut * 4096) + 2048;
 
 	/*Conversion del dato del DA:*/
-	DAC_CONT(DAC_Port, DAC_Pin, (uint16_t) signalOut);
+	DAC_CONT(dacPort, dacPin, (uint16_t) signalOut);
 }
 
 /*------------------------------------------------------------------------------
 FUNCIONES LOCALES:
 ------------------------------------------------------------------------------*/
-/*Proceso del FIR: Y(n) = A0*X(n):*/
-void filter_fir_f32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff)
+/*Proceso del IIR: Y(n) = B0*X(n) + B1*X(n-1) + B2*X(n-2) + A1*Y(n-1) + A2*Y(n-2):*/
+void IIR_F32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff)
 {
 	float ACUM;
-	uint16_t k;
+	uint16_t i, i_bic;
 
 	/*Senal de Entrada:*/
 	ACUM = *pSrc;
 
-	/*X[n] = Ultimo elemento del buffer:*/
-	firState_f32[N_COEF] = ACUM;
-	/*Blanquear Acumulador:*/
-	ACUM = 0.0f;
-
-	/*Ciclo de K = 0 a NUM_COEF:*/
-	for(k = 0; k < N_COEF; k++)
+	/*Repetir por N bicuadraticas:*/
+	for(i_bic = 0; i_bic < N_COEF; i_bic++)
 	{
-		/*Convolucion:*/
-		ACUM = ACUM + pCoeff[k] * firState_f32[k];
-		/*Corrimiento de Datos:*/
-		firState_f32[k] = firState_f32[k+1];
+		/*Ajustar Indice de variables:*/
+		i = i_bic * 5;
+
+		/*X[n] = Valor del ADC o ultimo filtro:*/
+		iirState_f32[i + 2] = ACUM;
+
+		/* Y[n] =        B0 * X[n]   */
+		ACUM = pCoeff[i + 2] * iirState_f32[i + 2];
+		/* Y[n] = Y[n] + B1 * X[n-1] */
+		ACUM = ACUM + pCoeff[i + 1] * iirState_f32[i + 1];
+		/* Y[n] = Y[n] + B2 * X[n-2] */
+		ACUM = ACUM + pCoeff[i + 0] * iirState_f32[i + 0];
+		/* Y[n] = Y[n] + A1 * Y[n-1] */
+		ACUM = ACUM + pCoeff[i + 3] * iirState_f32[i + 3];
+		/* Y[n] = Y[n] + A2 * Y[n-2] */
+		ACUM = ACUM + pCoeff[i + 4] * iirState_f32[i + 4];
+
+		 /* X[n-2] = X[n-1] */
+		iirState_f32[i + 0] = iirState_f32[i + 1];
+		 /* X[n-1] = X[n]   */
+		iirState_f32[i + 1] = iirState_f32[i + 2];
+		/* Y[n-2] = Y[n-1] */
+		iirState_f32[i + 3] = iirState_f32[i + 4];
+		/* Y[n-1] = Y[n]   */
+		iirState_f32[i + 4] = ACUM;
 	}
 
-	/*Senal de Salida:*/
+	/*Senal de salida:*/
 	*pDst = ACUM;
 }
