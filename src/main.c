@@ -152,7 +152,8 @@ void IIR_F32(float* pSrc, float* pDst, uint32_t N_COEF, float* pCoeff_b, float* 
 		ACUM += iirStateIn_f32 [i] * pCoeff_b[i+1];
 		ACUM -= iirStateOut_f32[i] * pCoeff_a[i+1];
 	}
-
+    
+    /*Se restan los coeficientes de forma recursiva*/
 	for (uint32_t i = N_COEF - 1; i > 0; i--){
 		iirStateIn_f32[i]  = iirStateIn_f32 [i-1];
 		iirStateOut_f32[i] = iirStateOut_f32[i-1];
